@@ -481,8 +481,9 @@ def create_enhanced_api_server(host='0.0.0.0', port=5001):
     """Factory function to create API server"""
     return EnhancedAPIServer(host=host, port=port)
 
+server_instance = create_enhanced_api_server()
+app = server_instance.app
 
 if __name__ == "__main__":
     # Create and start the API server
-    api_server = create_enhanced_api_server()
-    api_server.run(debug=True)
+    server_instance.run(debug=True)
