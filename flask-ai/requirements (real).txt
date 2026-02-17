@@ -1,0 +1,81 @@
+# requirements.txt - Combined Flask-AI + Security Scanner
+# Base: Flask-AI requirements + Security scanner additions
+
+# ===========================
+# FLASK-AI CORE DEPENDENCIES
+# ===========================
+
+# Core ML and CV dependencies
+torch
+torchvision
+opencv-python
+numpy
+albumentations
+anomalib>=1.0.1
+Pillow
+scikit-learn
+scikit-image
+matplotlib
+scipy
+openai
+python-dotenv
+
+# ===========================
+# SECURITY SCANNER ADDITIONS
+# ===========================
+
+# YARA for pattern matching and malware detection
+yara-python==4.3.1
+
+# File type detection
+python-magic==0.4.27
+# Note: On Windows, also install:
+# python-magic-bin
+
+# Enhanced security
+cryptography==41.0.7
+
+# Additional utilities
+pathlib2==2.3.7
+
+# ===========================
+# SHARED DEPENDENCIES
+# ===========================
+
+# API dependencies (shared by both)
+flask
+flask-cors
+
+# System monitoring (optional, shared)
+psutil
+
+# ===========================
+# SYSTEM REQUIREMENTS NOTES
+# ===========================
+
+# YARA Installation:
+# - Ubuntu/Debian: sudo apt-get install libmagic1 libyara-dev
+# - CentOS/RHEL: sudo yum install file-libs yara-devel
+# - macOS: brew install yara libmagic
+# - Windows: Download YARA from https://github.com/VirusTotal/yara/releases
+
+# Python Version:
+# - Python 3.7+ required
+
+# GPU Support (Flask-AI):
+# - CUDA toolkit for GPU acceleration (optional)
+# - PyTorch with CUDA support
+
+# ===========================
+# REMOVED DEPENDENCIES
+# ===========================
+
+# Removed for stateless operation:
+# - pandas (used for database exports)
+# - openpyxl (used for Excel exports)
+# - reportlab (used for PDF generation)
+# - sqlite3 (built-in, but not used in stateless mode)
+
+# Missing Dependencies:
+openai
+dotenv
