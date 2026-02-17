@@ -23,7 +23,7 @@ class DatabaseSeeder extends Seeder
 
         ]);
 
-        User::factory(3)->create()->each(
+        User::factory(3)->updateOrCreate()->each(
             function ($user, $index) {
                 if ($index == 0) {
                     $user->update([

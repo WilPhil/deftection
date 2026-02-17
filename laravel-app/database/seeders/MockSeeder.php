@@ -19,7 +19,7 @@ class MockSeeder extends Seeder
      */
     public function run(): void
     {
-        User::factory(6)->create()->each(function ($user, $index) {
+        User::factory(6)->updateOrCreate()->each(function ($user, $index) {
             if ($index == 0) {
                 $user->update([
                     'name' => 'admin ' . $index,
@@ -38,7 +38,7 @@ class MockSeeder extends Seeder
             }
 
             // Create regular scans
-            Scan::factory(25)->create([
+            Scan::factory(25)->updateOrCreate([
                 'user_id' => $user->id,
             ])->each(function ($scan) {
                 $createdAt = fake()->dateTimeBetween('-1 month', 'now');
@@ -51,7 +51,7 @@ class MockSeeder extends Seeder
                 if ($scan->is_defect) {
                     $rand1 = rand(1, 5);
 
-                    ScanDefect::factory($rand1)->create([
+                    ScanDefect::factory($rand1)->updateOrCreate([
                         'scan_id' => $scan->id,
                         'created_at' => $createdAt,
                         'updated_at' => $createdAt
@@ -60,7 +60,7 @@ class MockSeeder extends Seeder
 
                 $rand2 = rand(0, 2);
                 if ($rand2 == 0) {
-                    ScanThreat::factory()->create([
+                    ScanThreat::factory()->updateOrCreate([
                         'scan_id' => $scan->id,
                         'status' => 'clean',
                         'risk_level' => 'none',
@@ -71,7 +71,7 @@ class MockSeeder extends Seeder
                         'updated_at' => $createdAt
                     ]);
                 } elseif ($rand2 == 1) {
-                    ScanThreat::factory()->create([
+                    ScanThreat::factory()->updateOrCreate([
                         'scan_id' => $scan->id,
                         'created_at' => $createdAt,
                         'updated_at' => $createdAt
@@ -80,7 +80,7 @@ class MockSeeder extends Seeder
             });
 
             // Create realtime sessions for each user
-            RealtimeSession::factory(rand(3, 8))->create([
+            RealtimeSession::factory(rand(3, 8))->updateOrCreate([
                 'user_id' => $user->id,
             ])->each(function ($session) {
                 $sessionCreatedAt = fake()->dateTimeBetween('-1 month', 'now');
@@ -105,7 +105,7 @@ class MockSeeder extends Seeder
                 // Create realtime scans for each session
                 $scanCount = rand(50, 200); // Random number of scans per session
 
-                RealtimeScan::factory($scanCount)->create([
+                RealtimeScan::factory($scanCount)->updateOrCreate([
                     'realtime_session_id' => $session->id,
                 ])->each(function ($realtimeScan, $scanIndex) use ($session, $sessionCreatedAt) {
                     // Generate captured_at time within session duration
@@ -137,7 +137,7 @@ class MockSeeder extends Seeder
                     if ($realtimeScan->is_defect) {
                         $defectCount = rand(1, 3); // 1-3 defects per defective scan
 
-                        RealtimeScanDefect::factory($defectCount)->create([
+                        RealtimeScanDefect::factory($defectCount)->updateOrCreate([
                             'realtime_scan_id' => $realtimeScan->id,
                             'created_at' => $capturedAt,
                             'updated_at' => $capturedAt,
