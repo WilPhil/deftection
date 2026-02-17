@@ -26,7 +26,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Scan::class, ScanPolicy::class);
 
         if (app()->environment('production')) {
-            \URL::forcheScheme('https');
+            \URL::forceScheme('https');
         }
     }
 }
