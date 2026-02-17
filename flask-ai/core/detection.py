@@ -6,17 +6,25 @@ from albumentations.pytorch import ToTensorV2
 from openai import OpenAI
 import base64
 import io
+import gc
+import psutil
 from PIL import Image
 from config import *
+
+def log_memory(stage="Check"):
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    print(f"{stage} memory usage: {mem_mb:.2f} MB")
 
 
 class DetectionCore:
     """Core detection functionality with product-aware OpenAI integration"""
 
-    def __init__(self, anomalib_model, hrnet_model, device='cuda'):
+    def __init__(self, anomalib_model, hrnet_model, device='cpu'):
         self.anomalib_model = anomalib_model
         self.hrnet_model = hrnet_model
         self.device = device
+        log_memory("Core Initialized")
 
         # Setup OpenAI 1.x client
         if OPENAI_API_KEY:
@@ -43,6 +51,11 @@ class DetectionCore:
             raise ValueError("Anomalib model not loaded")
 
         try:
+            log_memory("Starting Anomalib")
+            # Force no_grad to prevent RAM spikes during inference
+            with torch.no_grad():
+                result = self.anomalib_model.predict(image=image_path)
+
             # Run Anomalib inference
             result = self.anomalib_model.predict(image=image_path)
 
@@ -92,6 +105,10 @@ class DetectionCore:
                 base_result['frame_mode_processing'] = True
                 base_result['openai_skipped'] = 'cost_efficiency'
 
+            # Cleanup
+            del result
+            gc.collect()
+
             return base_result
 
         except Exception as e:
@@ -106,6 +123,8 @@ class DetectionCore:
             raise ValueError("HRNet model not loaded")
 
         try:
+            log_memory("Starting HRNet")
+
             # Load image
             image = cv2.imread(image_path)
             if image is None:
@@ -143,6 +162,12 @@ class DetectionCore:
             # Use enhanced detection
             from core.enhanced_detection import analyze_defect_predictions_enhanced
             defect_analysis = analyze_defect_predictions_enhanced(predicted_mask, confidence_scores, original_size)
+
+            # Cleanup
+            del input_tensor
+            del output
+            del predictions
+            gc.collect()
 
             base_result = {
                 'predicted_mask': predicted_mask,
@@ -384,7 +409,7 @@ class DetectionCore:
     PACKAGING PRODUCTS (Apply high confidence):
     - Consumer packaging (boxes, containers, wrappers, bottles, cans, pouches)
     - Electronics packaging (device boxes, cases, protective packaging)
-    - Food/beverage packaging (bags, bottles, cartons, containers)  
+    - Food/beverage packaging (bags, bottles, cartons, containers)
     - Medical/pharmaceutical packaging (bottles, blister packs, boxes)
     - Cosmetic packaging (tubes, bottles, containers, cases)
     - Industrial/commercial packaging and protective casing
@@ -475,12 +500,12 @@ class DetectionCore:
                 # Force minimum confidence for packaging items
                 confidence = max(confidence, 80)
                 mask_confidence = max(mask_confidence, 82)
-                
+
                 # Apply additional boosting logic
                 if confidence < 85 and detected_defects:
                     confidence = 85  # Boost to target range if defects detected
-                
-            # Extract mask-specific corrections from OpenAI response  
+
+            # Extract mask-specific corrections from OpenAI response
             corrections = self._extract_mask_corrections(analysis_text)
 
             print(f"HIGH CONFIDENCE HRNet segmentation analysis completed - Product: {product_validation}, Confidence: {confidence}%")
@@ -517,7 +542,7 @@ class DetectionCore:
                 'error': str(e)
             }
 
-    
+
 
     # Helper methods untuk extract information dari OpenAI responses
     def _extract_classification(self, analysis_text):
