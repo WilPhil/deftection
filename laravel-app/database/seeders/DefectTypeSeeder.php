@@ -50,7 +50,7 @@ class DefectTypeSeeder extends Seeder
         ];
 
         foreach ($defectTypes as $defectType) {
-            DefectType::create($defectType);
+            DefectType::updateOrCreate($defectType);
         }
     }
 }
