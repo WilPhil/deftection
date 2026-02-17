@@ -1,0 +1,11 @@
+libgl1
+libglib2.0-0
+libsm6
+libxext6
+libxrender1
+libxcb1
+libx11-xcb1
+libxcb-dri3-0
+libxcb-present0
+libxcb-sync1
+libxcb-xfixes0
