@@ -108,13 +108,14 @@ class ReportController extends Controller
 
             return $pdf->download($filename);
         } catch (\Exception $e) {
-            Log::error('Single scan report generation failed', [
-                'scan_id' => $scan->id,
-                'user_id' => auth()->id(),
-                'error' => $e->getMessage(),
-            ]);
+            // Log::error('Single scan report generation failed', [
+            //     'scan_id' => $scan->id,
+            //     'user_id' => auth()->id(),
+            //     'error' => $e->getMessage(),
+            // ]);
 
-            return back()->with('error', 'Failed to generate report. Please try again.');
+            // return back()->with('error', 'Failed to generate report. Please try again.');
+            dd($e->getMessage());
         }
     }
 
