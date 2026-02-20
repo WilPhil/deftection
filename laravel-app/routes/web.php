@@ -199,6 +199,15 @@ Route::get('/storage/{path}', function ($path) {
     abort(404);
 })->where('path', '.*');
 
+Route::get('/debug/storage', function () {
+    $files = Illuminate\Support\Facades\Storage::disk('public')->allFiles();
+
+    return response()->json([
+        'physical_volume_path' => storage_path('app/public'),
+        'total_files_found' => count($files),
+        'file_list' => $files,
+    ]);
+});
 // Route::get('/home', function () {
 //   return Inertia::render('Database/ProductOld');
 // });
