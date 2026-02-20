@@ -1,22 +1,23 @@
 <?php
 
-use Inertia\Inertia;
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DefectTypeController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\RealtimeAnalysisController;
+use App\Http\Controllers\RealtimeController;
+use App\Http\Controllers\RealtimeFrameController;
+use App\Http\Controllers\RealtimeScanController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\ScanController;
+use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\UserController;
+use App\Http\Middleware\RoleMiddleware;
 use App\Models\DefectType;
 use Illuminate\Support\Facades\Route;
-use App\Http\Middleware\RoleMiddleware;
-use App\Http\Controllers\ScanController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\ReportController;
-use App\Http\Controllers\ProductController;
-use App\Http\Controllers\RealtimeController;
-use App\Http\Controllers\SettingsController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\Auth\LoginController;
-use App\Http\Controllers\DefectTypeController;
-use App\Http\Controllers\RealtimeScanController;
-use App\Http\Controllers\Auth\RegisterController;
-use App\Http\Controllers\RealtimeFrameController;
-use App\Http\Controllers\RealtimeAnalysisController;
+use Illuminate\Support\Facades\Storage;
+use Inertia\Inertia;
 
 Route::permanentRedirect('/', '/login');
 Route::post('/logout', [LoginController::class, 'destroy'])->middleware('auth')->name('logout');
@@ -185,6 +186,18 @@ Route::middleware(['auth'])->group(function () {
   Route::post('/process-frame', [RealtimeFrameController::class, 'processFrame'])->name('realtime.sessions.process_frame');
 });
 
+// Fallback route to manually serve storage files, bypassing broken Docker symlinks
+Route::get('/storage/{path}', function ($path) {
+    // Get the absolute path from the volume
+    $absolutePath = Storage::disk('public')->path($path);
+
+    if (file_exists($absolutePath)) {
+        // Serve the file directly to the browser
+        return response()->file($absolutePath);
+    }
+
+    abort(404);
+})->where('path', '.*');
 
 // Route::get('/home', function () {
 //   return Inertia::render('Database/ProductOld');
