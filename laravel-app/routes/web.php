@@ -196,7 +196,11 @@ Route::get('/storage/{path}', function ($path) {
         return response()->file($absolutePath);
     }
 
-    abort(404);
+    return response()->json([
+        'error' => 'Route triggered, but file not found on disk.',
+        'requested_path' => $path,
+        'looked_in_absolute_path' => $absolutePath,
+    ], 404);
 })->where('path', '.*');
 
 Route::get('/debug/storage', function () {
