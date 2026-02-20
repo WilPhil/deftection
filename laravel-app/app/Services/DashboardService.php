@@ -17,11 +17,23 @@ class DashboardService
      */
     public function getDashboardData(array $filters = []): array
     {
+
+        $fullTrend = $this->getPerformanceTrend(30);
+
+        $dailyAnalysis = [
+            'labels' => array_slice($fullTrend['labels'], -7),
+            'totalDefective' => array_slice($fullTrend['data'], -7), // Last 7 days
+            'totalProcessed' => array_slice($fullTrend['total_processed'], -7),
+        ];
+
         return [
             'cardData' => $this->getCardDataOnly(),
-            'dailyAnalysis' => $this->getDailyTrendOnly(7),
+            'dailyAnalysis' => $dailyAnalysis,
             'defectType' => $this->getDefectTypeDistribution(),
-            'performanceTrend' => $this->getPerformanceTrend(30),
+            'performanceTrend' => [
+                'labels' => $fullTrend['labels'],
+                'defectData' => $fullTrend['data'],
+            ],
             'recentAnalyses' => $this->getRecentAnalysesOnly(5),
             'analysesOverview' => $this->getAnalysesOverviewOnly(),
         ];
@@ -33,119 +45,57 @@ class DashboardService
     public function getCardDataOnly(): array
     {
         $userId = auth()->id();
+        $currentStart = now()->startOfDay();
+        $currentEnd = now()->endOfDay();
+        $prevStart = now()->subDay()->startOfDay();
+        $prevEnd = now()->subDay()->endOfDay();
 
-        // Get data for current period
-        $currentData = $this->getCardDataForPeriod($userId, now()->startOfDay(), now()->endOfDay());
+        // Get standard scan stats for current and previous periods in ONE query
+        $scanStats = Scan::where('user_id', $userId)
+            ->whereBetween('created_at', [$prevStart, $currentEnd])
+            ->selectRaw("
+                SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as current_total,
+                SUM(CASE WHEN created_at >= ? AND is_defect = 1 THEN 1 ELSE 0 END) as current_defective,
+                SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END) as prev_total,
+                SUM(CASE WHEN created_at < ? AND is_defect = 1 THEN 1 ELSE 0 END) as prev_defect
+            ", [$currentStart, $currentStart, $currentStart, $currentStart])
+            ->first();
 
-        // Get data for previous period (for comparison)
-        $previousData = $this->getCardDataForPeriod($userId, now()->subDay()->startOfDay(), now()->subDay()->endOfDay());
+        // Get realtime scan stats for current and previous periods in ONE query
+        $realtimeStats = RealtimeScan::join('realtime_sessions', 'realtime_scans.realtime_session_id', '=', 'realtime_sessions.id')
+            ->where('realtime_sessions.user_id', $userId)
+            ->whereBetween('realtime_scans.created_at', [$prevStart, $currentEnd])
+            ->selectRaw("
+                SUM(CASE WHEN realtime_scans.created_at >= ? THEN 1 ELSE 0 END) as current_total,
+                SUM(CASE WHEN realtime_scans.created_at >= ? AND realtime_scans.is_defect = 1 THEN 1 ELSE 0 END) as current_defective,
+                SUM(CASE WHEN realtime_scans.created_at < ? THEN 1 ELSE 0 END) as prev_total,
+                SUM(CASE WHEN realtime_scans.created_at < ? AND realtime_scans.is_defect = 1 THEN 1 ELSE 0 END) as prev_defect,
+                COUNT(DISTINCT CASE WHEN realtime_scans.created_at >= ? THEN realtime_sessions.id END) as current_sessions,
+                COUNT(DISTINCT CASE WHEN realtime_scans.created_at < ? THEN realtime_sessions.id END) as prev_sessions
+            ", [$currentStart, $currentStart, $currentStart, $currentStart, $currentStart, $currentStart])
+            ->first();
 
-        return [
-            'totalDefective' => $currentData['totalDefective'],
-            'totalScansImage' => $currentData['totalScansImage'],
-            'totalRealtimeSessions' => $currentData['totalRealtimeSessions'],
-            'totalFramesProcessed' => $currentData['totalFramesProcessed'],
-            'defectiveChangeRate' => $this->calculateChangeRate($previousData['totalDefective'], $currentData['totalDefective']),
-            'scansChangeRate' => $this->calculateChangeRate($previousData['totalScansImage'], $currentData['totalScansImage']),
-            'sessionsChangeRate' => $this->calculateChangeRate($previousData['totalRealtimeSessions'], $currentData['totalRealtimeSessions']),
-            'framesChangeRate' => $this->calculateChangeRate($previousData['totalFramesProcessed'], $currentData['totalFramesProcessed']),
-        ];
-    }
+            $currentDefective = ($scanStats->current_defective ?? 0) + ($realtimeStats->current_defective ?? 0);
+            $prevDefective = ($scanStats->prev_defect ?? 0) + ($realtimeStats->prev_defect ?? 0);
 
-    /**
-     * Get card data for a specific period
-     */
-    private function getCardDataForPeriod(int $userId, Carbon $startDate, Carbon $endDate): array
-    {
-        // Total defective products from image scans
-        $totalDefectiveFromScans = Scan::where('user_id', $userId)
-            ->where('is_defect', true)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->count();
+            $currentScans = $scanStats->current_total ?? 0;
+            $prevScans = $scanStats->prev_total ?? 0;
 
-        // Total defective products from realtime scans
-        $totalDefectiveFromRealtime = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })
-            ->where('is_defect', true)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->count();
+            $currentSessions = $realtimeStats->current_sessions ?? 0;
+            $prevSessions = $realtimeStats->prev_sessions ?? 0;
 
-        // Total image scans processed
-        $totalScansImage = Scan::where('user_id', $userId)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->count();
-
-        // Total realtime sessions
-        $totalRealtimeSessions = RealtimeSession::where('user_id', $userId)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->count();
-
-        // Total frames processed (realtime scans)
-        $totalFramesProcessed = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->count();
+            $currentFrames = $realtimeStats->current_total ?? 0;
+            $prevFrames = $realtimeStats->prev_total ?? 0;
 
         return [
-            'totalDefective' => $totalDefectiveFromScans + $totalDefectiveFromRealtime,
-            'totalScansImage' => $totalScansImage,
-            'totalRealtimeSessions' => $totalRealtimeSessions,
-            'totalFramesProcessed' => $totalFramesProcessed,
-        ];
-    }
-
-    /**
-     * Get daily analysis trend data
-     */
-    public function getDailyTrendOnly(int $days = 7): array
-    {
-        $userId = auth()->id();
-        $startDate = now()->subDays($days - 1)->startOfDay();
-        $endDate = now()->endOfDay();
-
-        $labels = [];
-        $totalDefective = [];
-        $totalProcessed = [];
-
-        for ($i = 0; $i < $days; $i++) {
-            $date = $startDate->copy()->addDays($i);
-            $labels[] = $date->format('Y-m-d');
-
-            // Count defective items for this date
-            $defectiveFromScans = Scan::where('user_id', $userId)
-                ->where('is_defect', true)
-                ->whereDate('created_at', $date)
-                ->count();
-
-            $defectiveFromRealtime = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })
-                ->where('is_defect', true)
-                ->whereDate('created_at', $date)
-                ->count();
-
-            $totalDefective[] = $defectiveFromScans + $defectiveFromRealtime;
-
-            // Count total processed items for this date
-            $processedScans = Scan::where('user_id', $userId)
-                ->whereDate('created_at', $date)
-                ->count();
-
-            $processedFrames = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })
-                ->whereDate('created_at', $date)
-                ->count();
-
-            $totalProcessed[] = $processedScans + $processedFrames;
-        }
-
-        return [
-            'labels' => $labels,
-            'totalDefective' => $totalDefective,
-            'totalProcessed' => $totalProcessed,
+            'totalDefective' => (int)$currentDefective,
+            'totalScansImage' => (int)$currentScans,
+            'totalRealtimeSessions' => (int)$currentSessions,
+            'totalFramesProcessed' => (int)$currentFrames,
+            'defectiveChangeRate' => $this->calculateChangeRate((int)$prevDefective, (int)$currentDefective),
+            'scansChangeRate' => $this->calculateChangeRate((int)$prevScans, (int)$currentScans),
+            'sessionsChangeRate' => $this->calculateChangeRate((int)$prevSessions, (int)$currentSessions),
+            'framesChangeRate' => $this->calculateChangeRate((int)$prevFrames, (int)$currentFrames),
         ];
     }
 
@@ -157,30 +107,30 @@ class DashboardService
         $userId = auth()->id();
 
         // Get defects from image scans
-        $scanDefects = ScanDefect::whereHas('scan', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })
-            ->select('label', DB::raw('count(*) as count'))
-            ->groupBy('label')
-            ->get();
+        $scanDefects = ScanDefect::join('scans', 'scan_defects.scan_id', '=', 'scans.id')
+            ->where('scans.user_id', $userId)
+            ->selectRaw('scan_defects.label, COUNT(*) as count')
+            ->groupBy('scan_defects.label')
+            ->pluck('count', 'label')
+            ->toArray();
 
         // Get defects from realtime scans
-        $realtimeDefects = RealtimeScanDefect::whereHas('realtimeScan.realtimeSession', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })
-            ->select('label', DB::raw('count(*) as count'))
-            ->groupBy('label')
-            ->get();
+        $realtimeDefects = RealtimeScanDefect::join('realtime_scans', 'realtime_scan_defects.realtime_scan_id', '=', 'realtime_scans.id')
+            ->join('realtime_sessions', 'realtime_scans.realtime_session_id', '=', 'realtime_sessions.id')
+            ->where('realtime_sessions.user_id', $userId)
+            ->selectRaw('realtime_scan_defects.label, COUNT(*) as count')
+            ->groupBy('realtime_scan_defects.label')
+            ->pluck('count', 'label')
+            ->toArray();
 
         // Combine and aggregate the results
         $combined = [];
-        foreach ($scanDefects as $defect) {
-            $combined[$defect->label] = ($combined[$defect->label] ?? 0) + $defect->count;
+        foreach(array_unique(array_merge(array_keys($scanDefects), array_keys($realtimeDefects))) as $label) {
+            $combined[$label] = ($scanDefects[$label] ?? 0) + ($realtimeDefects[$label] ?? 0);
         }
 
-        foreach ($realtimeDefects as $defect) {
-            $combined[$defect->label] = ($combined[$defect->label] ?? 0) + $defect->count;
-        }
+        // Sort descending so the highest count (Top Defect) is always first
+        arsort($combined);
 
         return [
             'labels' => array_keys($combined),
@@ -197,32 +147,44 @@ class DashboardService
         $startDate = now()->subDays($days - 1)->startOfDay();
         $endDate = now()->endOfDay();
 
+        // Get standard defects by date in ONE query
+        $scanStats = Scan::where('user_id', $userId)
+            ->where('is_defect', true)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('DATE(created_at) as date, COUNT(*) as total, SUM(is_defect) as defective')
+            ->groupBy('date')
+            ->get()
+            ->keyBy('date');
+
+        // Get realtime defects by date in ONE query
+        $realtimeStats = RealtimeScan::join('realtime_sessions', 'realtime_scans.realtime_session_id', '=', 'realtime_sessions.id')
+            ->where('realtime_sessions.user_id', $userId)
+            ->where('realtime_scans.is_defect', true)
+            ->whereBetween('realtime_scans.created_at', [$startDate, $endDate])
+            ->selectRaw('DATE(realtime_scans.created_at) as date, COUNT(realtime_scans.id) as total, SUM(realtime_scans.is_defect) as defective')
+            ->groupBy('date')
+            ->get()
+            ->keyBy('date');
+
         $labels = [];
         $data = [];
+        $totalProcessedData = [];
 
         for ($i = 0; $i < $days; $i++) {
-            $date = $startDate->copy()->addDays($i);
-            $labels[] = $date->format('Y-m-d');
+            $dateStr = $startDate->copy()->addDays($i)->format('Y-m-d');
+            $labels[] = $dateStr;
 
-            // Count total defects detected for this date
-            $defectiveFromScans = Scan::where('user_id', $userId)
-                ->where('is_defect', true)
-                ->whereDate('created_at', $date)
-                ->count();
+            $scanDay = $scanStats->get($dateStr);
+            $realtimeDay = $realtimeStats->get($dateStr);
 
-            $defectiveFromRealtime = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })
-                ->where('is_defect', true)
-                ->whereDate('created_at', $date)
-                ->count();
-
-            $data[] = $defectiveFromScans + $defectiveFromRealtime;
+            $defectData[] = (int)($scanDay->defective ?? 0) + (int)($realtimeDay->defective ?? 0);
+            $totalProcessedData[] = (int)($scanDay->total ?? 0) + (int)($realtimeDay->total ?? 0);
         }
 
         return [
             'labels' => $labels,
-            'data' => $data,
+            'data' => $defectData,
+            'total_processed' => $totalProcessedData,
         ];
     }
 
@@ -235,7 +197,7 @@ class DashboardService
 
         // Get recent scans
         $recentScans = Scan::where('user_id', $userId)
-            ->with(['scanDefects', 'user'])
+            ->withCount('scanDefects')
             ->orderBy('created_at', 'desc')
             ->limit($limit)
             ->get()
@@ -246,28 +208,13 @@ class DashboardService
                     'filename' => $scan->filename,
                     'status' => $scan->is_defect ? 'defect' : 'good',
                     'anomaly_score' => $scan->anomaly_score,
-                    'defect_count' => $scan->scanDefects->count(),
+                    'defect_count' => $scan->scan_defects_count,
                     'created_at' => $scan->created_at->format('Y-m-d H:i:s'),
                     'route' => route('scans.show', $scan->id),
                 ];
             });
 
         return $recentScans->toArray();
-    }
-
-    /**
-     * Get overview data for charts and widgets
-     */
-    public function getOverviewDataOnly(): array
-    {
-        $cardData = $this->getCardDataOnly();
-
-        return [
-            'totalAnalyses' => $cardData['totalScansImage'] + $cardData['totalFramesProcessed'],
-            'defectRate' => $this->getDefectRate(),
-            'avgProcessingTime' => $this->getAverageProcessingTime(),
-            'topDefectType' => $this->getTopDefectType(),
-        ];
     }
 
     /**
@@ -286,131 +233,63 @@ class DashboardService
     }
 
     /**
-     * Calculate overall defect rate
-     */
-    private function getDefectRate(): float
-    {
-        $userId = auth()->id();
-
-        $totalDefective = Scan::where('user_id', $userId)->where('is_defect', true)->count() +
-            RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })->where('is_defect', true)->count();
-
-        $totalProcessed = Scan::where('user_id', $userId)->count() +
-            RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })->count();
-
-        return $totalProcessed > 0 ? round(($totalDefective / $totalProcessed) * 100, 2) : 0;
-    }
-
-    /**
-     * Calculate overall good rate
-     */
-    private function getGoodRate(): float
-    {
-        $userId = auth()->id();
-
-        $totalAnalyses = Scan::where('user_id', $userId)->count() +
-            RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })->count();
-
-        $totalSuccess = Scan::where('user_id', $userId)->where('is_defect', false)->count() +
-            RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-                $query->where('user_id', $userId);
-            })->where('is_defect', false)->count();
-
-        return $totalAnalyses > 0 ? round(($totalSuccess / $totalAnalyses) * 100, 2) : 0;
-    }
-
-    /**
-     * Get average processing time
-     */
-    private function getAverageProcessingTime(): float
-    {
-        $userId = auth()->id();
-
-        $scanAvg = Scan::where('user_id', $userId)
-            ->selectRaw('AVG(COALESCE(preprocessing_time_ms, 0) + COALESCE(anomaly_inference_time_ms, 0) + COALESCE(classification_inference_time_ms, 0) + COALESCE(postprocessing_time_ms, 0)) as avg_time')
-            ->value('avg_time') ?? 0;
-
-        $realtimeAvg = RealtimeScan::whereHas('realtimeSession', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })
-            ->selectRaw('AVG(COALESCE(preprocessing_time_ms, 0) + COALESCE(anomaly_inference_time_ms, 0) + COALESCE(classification_inference_time_ms, 0) + COALESCE(postprocessing_time_ms, 0)) as avg_time')
-            ->value('avg_time') ?? 0;
-
-        return round(($scanAvg + $realtimeAvg) / 2, 2);
-    }
-
-        /**
-     * Get the average AI confidence score across all defect detections.
-     * The confidence score from the database (0.0 to 1.0) is converted to a percentage (0 to 100).
-     */
-    private function getAverageAiConfidence(): float
-    {
-        $userId = auth()->id();
-
-        // Calculate average confidence from standard image scans
-        $scanConfidenceAvg = ScanDefect::whereHas('scan', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })->avg('confidence_score') ?? 0;
-
-        // Calculate average confidence from real-time scans
-        $realtimeConfidenceAvg = RealtimeScanDefect::whereHas('realtimeScan.realtimeSession', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        })->avg('confidence_score') ?? 0;
-
-        // Create an array of the averages that are greater than zero
-        $validAverages = array_filter([$scanConfidenceAvg, $realtimeConfidenceAvg]);
-
-        if (empty($validAverages)) {
-            return 0.0;
-        }
-
-        // Calculate the average of the available (non-zero) averages
-        $averageOfAverages = array_sum($validAverages) / count($validAverages);
-
-        // Convert to percentage and round to 2 decimal places
-        return round($averageOfAverages * 100, 2);
-    }
-
-    /**
-     * Get the most common defect type
-     */
-    private function getTopDefectType(): ?string
-    {
-        $defectDistribution = $this->getDefectTypeDistribution();
-
-        if (empty($defectDistribution['data'])) {
-            return null;
-        }
-
-        $maxIndex = array_search(max($defectDistribution['data']), $defectDistribution['data']);
-
-        return $defectDistribution['labels'][$maxIndex] ?? null;
-    }
-
-    /**
-     * Get defect trend data (legacy method for backward compatibility)
-     */
-    public function getDefectTrendOnly(?string $filterMonth = null): array
-    {
-        return $this->getDailyTrendOnly(30);
-    }
-
-    /**
      * Get analyses overview data (legacy method for backward compatibility)
      */
     public function getAnalysesOverviewOnly(): array
     {
+        $userId = auth()->id();
+
+        // Get standard scan stats
+        $scanStats = Scan::where('user_id', $userId)
+            ->selectRaw("
+                COUNT(id) as total_processed,
+                SUM(CASE WHEN is_defect = 1 THEN 1 ELSE 0 END) as total_defective,
+                AVG(COALESCE(preprocessing_time_ms, 0) + COALESCE(anomaly_inference_time_ms, 0) + COALESCE(classification_inference_time_ms, 0) + COALESCE(postprocessing_time_ms, 0)) as avg_processing_time
+            ")
+            ->first();
+
+        // Get realtime scan stats
+        $realtimeStats = RealtimeScan::join('realtime_sessions', 'realtime_scans.realtime_session_id', '=', 'realtime_sessions.id')
+            ->where('realtime_sessions.user_id', $userId)
+            ->selectRaw("
+                COUNT(realtime_scans.id) as total_processed,
+                SUM(CASE WHEN realtime_scans.is_defect = 1 THEN 1 ELSE 0 END) as total_defective,
+                AVG(COALESCE(realtime_scans.preprocessing_time_ms, 0) + COALESCE(realtime_scans.anomaly_inference_time_ms, 0) + COALESCE(realtime_scans.classification_inference_time_ms, 0) + COALESCE(realtime_scans.postprocessing_time_ms, 0)) as avg_processing_time
+            ")
+            ->first();
+
+        // Get average AI confidence
+        $scanConfidenceAvg = ScanDefect::join('scans', 'scan_defects.scan_id', '=', 'scans.id')
+            ->where('scans.user_id', $userId)
+            ->avg('scan_defects.confidence_score') ?? 0;
+
+        $realtimeConfidenceAvg = RealtimeScanDefect::join('realtime_scans', 'realtime_scan_defects.realtime_scan_id', '=', 'realtime_scans.id')
+            ->join('realtime_sessions', 'realtime_scans.realtime_session_id', '=', 'realtime_sessions.id')
+            ->where('realtime_sessions.user_id', $userId)
+            ->avg('realtime_scan_defects.confidence_score') ?? 0;
+
+        // Math
+        $totalProcessed = ($scanStats->total_processed ?? 0) + ($realtimeStats->total_processed ?? 0);
+        $totalDefective = ($scanStats->total_defective ?? 0) + ($realtimeStats->total_defective ?? 0);
+        $totalSuccess = $totalProcessed - $totalDefective;
+
+        // Calculate rates
+        $goodRate = $totalProcessed > 0 ? round(($totalSuccess / $totalProcessed) * 100, 2) : 0;
+        $defectRate = $totalProcessed > 0 ? round(($totalDefective / $totalProcessed) * 100, 2) : 0;
+
+        // Calculate average processing time
+        $validTimes = array_filter([$scanStats->avg_processing_time ?? 0, $realtimeStats->avg_processing_time ?? 0]);
+        $avgProcessingTime = empty($validTimes) ? 0 : round(array_sum($validTimes) / count($validTimes), 2);
+
+        // Calculate average AI confidence
+        $validConfidences = array_filter([$scanConfidenceAvg, $realtimeConfidenceAvg]);
+        $avgAiConfidence = empty($validConfidences) ? 0.0 : round((array_sum($validConfidences) / count($validConfidences)) * 100, 2);
+
         return [
-            'avgProcessingTime' => $this->getAverageProcessingTime(),
-            'goodRate' => $this->getGoodRate(),
-            'defectRate' => $this->getDefectRate(),
-            'aiConfidence' => $this->getAverageAiConfidence(),
+            'avgProcessingTime' => $avgProcessingTime,
+            'goodRate' => $goodRate,
+            'defectRate' => $defectRate,
+            'aiConfidence' => $avgAiConfidence,
         ];
     }
 }
