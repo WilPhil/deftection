@@ -424,6 +424,8 @@ class ScanController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
+            dd($e->getMessage(), $e->getTraceAsString());
+
             return Inertia::render('ImageAnalysis/Index', [
                 'errors' => [
                     'message' => 'Something went wrong during image analysis. Please try again.',
